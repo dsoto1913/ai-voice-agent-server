@@ -39,18 +39,16 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 // Handle incoming media
-wss.on('connection', ws => {
-  console.log('🟢 Media stream connected');
-  ws.on('message', msg => {
+wss.on('connection', (ws) => {
+  console.log('Media stream connected');
+  ws.on('message', async (msg) => {
     const data = JSON.parse(msg);
     if (data.event === 'start') {
-      console.log(\`🟡 Stream \${data.streamSid} started\`);
+      console.log('Stream ' + data.streamSid + ' started');
     }
-    if (data.event === 'media') {
-      // TODO: process data.media.payload (base64 audio) with OpenAI/Deepgram + ElevenLabs TTS
-    }
+    // …snip…
     if (data.event === 'stop') {
-      console.log(\`🔴 Stream \${data.streamSid} ended\`);
+      console.log('Stream ' + data.streamSid + ' ended');
       ws.close();
     }
   });
