@@ -24,7 +24,7 @@ app.post('/incoming-call', (req, res) => {
 app.get('/', (req, res) => res.send('OK'));
 
 // Start HTTP server
-const server = app.listen(PORT, () => console.log(\`Server listening on port \${PORT}\`));
+const server = app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
 // Upgrade `/media-stream` to WebSocket
 const wss = new WebSocketServer({ noServer: true });
