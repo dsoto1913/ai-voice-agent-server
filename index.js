@@ -1,11 +1,7 @@
 // File: index.js
 // ---------------------
 // A Node.js + WebSocket server for Twilio Voice Streams
-// Handles incoming calls, real‑time audio streaming, STT → AI chat → TTS, and media playback.
-
-// Prerequisites:
-// - Environment Variables:
-//     RENDER_EXTERNAL_URL (e.g. ai-voice-agent-server.onrender.com)
+// Handles incoming calls, real-time audio streaming, STT → AI chat → TTS, and media playback.
 
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -13,26 +9,16 @@ const { OpenAI } = require('openai');
 const { Deepgram } = require('@deepgram/sdk');
 const axios = require('axios');
 
-// Initialize services with your API keys
-const openai = new OpenAI({
-  apiKey: "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"
-});
-const deepgram = new Deepgram(
-  "8e588491dd1afea4765805cefb3cf9b5284f3aec"
-);
+// Initialize services with your API keys via environment variables
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
-// Twilio fetches this to start media stream
-// Twilio fetches this to start media stream and play a dynamic greeting
-app.post('/incoming-call', (req, res) => {
-  // Determine call direction: 'inbound' or 'outbound-api'
-  const direction = req.body.Direction || 'outbound-api';
-
-  // Define greeting pools (add hundreds more as desired)
-  const outboundGreetings = [
+// 100 human-like outbound greetings
+const outboundGreetings = [
   "Hey, did I catch you at a good time?",
   "What’s up? This is Onyx from Apex AI.",
   "Hey there! It’s Onyx—hope I’m not interrupting.",
@@ -125,7 +111,9 @@ app.post('/incoming-call', (req, res) => {
   "Hey—Onyx from Apex AI—quick talk?",
   "Hi there! Onyx here—anything new today?"
 ];
-  const inboundGreetings = [
+
+// 100 human-like inbound greetings
+const inboundGreetings = [
   "Hey there! Onyx here at Apex AI Solutions, how can I help you today?",
   "Hi, you’ve reached Onyx at Apex AI—what can I do for you?",
   "Hello! This is Onyx speaking, how may I assist you?",
@@ -224,16 +212,16 @@ app.post('/incoming-call', (req, res) => {
   "Onyx here—what can I do to assist you?"
 ];
 
-  // Choose appropriate greeting
-  const greetings = direction === 'inbound' ? inboundGreetings : outboundGreetings;
-  const greeting = greetings[Math.floor(Math.random() * greetings.length)];
-
-  // Build TwiML: play greeting, then start streaming
+// Handle incoming-call
+app.post('/incoming-call', (req, res) => {
+  const direction = req.body.Direction || 'outbound-api';
+  const pool = direction === 'inbound' ? inboundGreetings : outboundGreetings;
+  const greeting = pool[Math.floor(Math.random() * pool.length)];
   const twiml = `
     <Response>
-      <Say voice="Polly.Matthew">${greeting}</Say>
+      <Say voice=\"Polly.Matthew\">${greeting}</Say>
       <Start>
-        <Stream url="wss://${process.env.RENDER_EXTERNAL_URL}/media-stream" />
+        <Stream url=\"wss://${process.env.RENDER_EXTERNAL_URL}/media-stream\" />
       </Start>
     </Response>`;
   res.type('application/xml').send(twiml);
@@ -242,107 +230,47 @@ app.post('/incoming-call', (req, res) => {
 // Health check
 app.get('/', (req, res) => res.send('OK'));
 
-// Start HTTP & WebSocket server
+// WebSocket setup
 const server = app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 const wss = new WebSocketServer({ noServer: true });
-
-// Upgrade HTTP on /media-stream to WebSocket
 server.on('upgrade', (request, socket, head) => {
   if (request.url === '/media-stream') {
     wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request));
-  } else {
-    socket.destroy();
-  }
+  } else socket.destroy();
 });
 
-// In‑memory session history map: streamSid → messages[]
+// AI session state & processing
 const sessions = {};
-
-// Handle streaming events
 wss.on('connection', ws => {
-  console.log('Media stream connected');
   let streamSid;
-
+  console.log('Media stream connected');
   ws.on('message', async msg => {
     const data = JSON.parse(msg);
-
     if (data.event === 'start') {
       streamSid = data.streamSid;
-      sessions[streamSid] = [
-        { role: 'system', content: 'You are a friendly sales AI calling leads in Indiana.' }
-      ];
-      console.log(`Stream ${streamSid} started`);
+      sessions[streamSid] = [{ role: 'system', content: 'You are a friendly sales AI calling leads in Indiana.' }];
       return;
     }
-
     if (data.event === 'media') {
       try {
         const audioBuffer = Buffer.from(data.media.payload, 'base64');
-
-        // 1) STT via Deepgram
-        const dgRes = await deepgram.transcription.preRecorded({
-          buffer: audioBuffer,
-          mimetype: 'audio/wav'
-        }, { punctuate: true });
+        const dgRes = await deepgram.transcription.preRecorded({ buffer: audioBuffer, mimetype: 'audio/wav' }, { punctuate: true });
         const transcript = dgRes.results.channels[0].alternatives[0].transcript;
-        console.log('Transcript:', transcript);
-
         sessions[streamSid].push({ role: 'user', content: transcript });
-
-        // 2) AI chat via OpenAI
-        const chatRes = await openai.chat.completions.create({
-          model: 'gpt-4o',
-          messages: sessions[streamSid]
-        });
+        const chatRes = await openai.chat.completions.create({ model: 'gpt-4o', messages: sessions[streamSid] });
         const aiReply = chatRes.choices[0].message.content;
-        console.log('AI reply:', aiReply);
-
         sessions[streamSid].push({ role: 'assistant', content: aiReply });
-
-        // 3) TTS via ElevenLabs
-        const voiceId = "XA2bIQ92TabjGbpO2xRr";
-        const elevenRes = await axios.post(
-          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-          { text: aiReply },
-          {
-            headers: { 'xi-api-key': "sk_4e5faedaba481c1c77d177a9e4630af27dd3a3929735eb85" },
-            responseType: 'arraybuffer'
-          }
-        );
+        const voiceId = process.env.ELEVENLABS_VOICE_ID;
+        const elevenRes = await axios.post(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, { text: aiReply }, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' });
         const audioB64 = Buffer.from(elevenRes.data, 'binary').toString('base64');
-
-        // 4) Send audio back to Twilio
-        ws.send(JSON.stringify({
-          event: 'media',
-          media: { payload: audioB64 }
-        }));
+        ws.send(JSON.stringify({ event: 'media', media: { payload: audioB64 } }));
       } catch (err) {
         console.error('Processing error:', err);
       }
     }
-
     if (data.event === 'stop') {
-      console.log(`Stream ${streamSid} ended`);
       delete sessions[streamSid];
       ws.close();
     }
   });
 });
-
-
-// File: package.json
-{
-  "name": "ai-voice-agent-server",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "@deepgram/sdk": "^2.0.0",
-    "axios": "^1.4.0",
-    "express": "^4.18.2",
-    "openai": "^4.2.0",
-    "ws": "^8.13.0"
-  }
-}
